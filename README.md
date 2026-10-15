@@ -124,8 +124,11 @@ gorod-n/
     ├── fetch_news.py    — ленты «маленькой Сызрани» и КТВ-ЛУЧ: скачать, список, полный текст по ID
     ├── post_json.py     — пост: текст/HTML, запись публикации, переименование по времени
     ├── gen_image.py     — картинка по image.prompt из JSON
-    ├── post_vk.py       — публикация JSON-поста в группу VK
-    └── vk_auth.py       — получение ключа VK
+    ├── gen_cover.py     — обложка группы VK
+    ├── photo_sketch.py  — фото пользователя → карандашный рисунок
+    ├── recolor_to_sky.py, sepia_tone.py — тонирование картинок
+    ├── pmp_api.py       — публикация через REST API Postmypost (если MCP недоступен)
+    └── inbox_bot.py     — бот для своих новостей (Telegram / MAX)
 ```
 
 ## Статус

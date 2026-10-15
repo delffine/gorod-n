@@ -1,7 +1,6 @@
 .env
 __pycache__/
 *.pyc
-.vk_auth_state.json
 .claude/settings.local.json
 temp/
 .mcp.json
