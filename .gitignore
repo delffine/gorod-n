@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.vk_auth_state.json
+.claude/settings.local.json
+temp/
+.mcp.json
+
+# бэкапы (внутри архивов есть старые конфиги с токенами)
+backup/
+*.zip
+
+# служебное
+.DS_Store
+Thumbs.db
