@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 .claude/settings.local.json
 temp/
-.mcp.json
 
 # бэкапы (внутри архивов есть старые конфиги с токенами)
 backup/

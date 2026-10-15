@@ -1,7 +1,7 @@
 """Публикация через REST API Postmypost — запасной путь, когда MCP Postmypost не подключается.
 
-Тот же проект, аккаунты и поля, что у MCP (см. скилл, раздел 7). Токен — из PMP_TOKEN или из .mcp.json
-(mcpServers.postmypost, заголовок Authorization).
+Тот же проект, аккаунты и поля, что у MCP (см. скилл, раздел 7). Токен — из переменной окружения PMP_TOKEN
+(на VPS — ~/.config/gorodn.env, на Windows — переменная пользователя) или из PMP_TOKEN в .env.
 
 Использование:
     python scripts/pmp_api.py publish posts/<пост>.json [--accounts tg,vk,max,ig] [--at 2026-10-12T11:00:00+04:00]
@@ -41,8 +41,13 @@ TG_CHANNEL = "City_N_news"
 def token() -> str:
     if os.environ.get("PMP_TOKEN"):
         return os.environ["PMP_TOKEN"]
-    cfg = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
-    return cfg["mcpServers"]["postmypost"]["headers"]["Authorization"].split()[-1]
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.strip().partition("=")
+            if key.strip() == "PMP_TOKEN" and value.strip():
+                return value.strip().strip('"').strip("'")
+    sys.exit("Нет токена Postmypost: задайте переменную окружения PMP_TOKEN (или PMP_TOKEN в .env)")
 
 
 def call(method: str, path: str, body: dict | None = None, **params) -> dict:
