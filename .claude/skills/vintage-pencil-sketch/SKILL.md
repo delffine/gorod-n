@@ -10,12 +10,12 @@ Two passes: (1) photo -> rough graphite sketch, (2) sketch -> light warm waterco
 ## 0. What to get from the user
 
 - The photo (attachment). Ask what must stay recognizable (main buildings, reflection in water, etc.) and what to drop.
-- Cloudflare keys: do NOT ask the user. They are in `.env` at the project root (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, permanent project token, also used by `scripts/gen_image.py` and `scripts/gen_cover.py`). Never print the token or copy it into other files.
+- Cloudflare keys: do NOT ask the user. They are environment variables `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (Windows user variables; on the VPS `~/.config/gorodn.env`; fallback — `.env` at the project root), permanent project token, also used by `scripts/gen_image.py` and `scripts/gen_cover.py`. Never print the token or copy it into other files.
 - Network: `api.cloudflare.com` must be reachable. If curl gets `CONNECT tunnel failed, 403`, ask the user to add `api.cloudflare.com` to allowed domains (Settings -> Capabilities) and retry.
 
 Load keys and check the token (user token):
 ```bash
-set -a; . ./.env; set +a; A=$CLOUDFLARE_ACCOUNT_ID; T=$CLOUDFLARE_API_TOKEN
+[ -z "${CLOUDFLARE_API_TOKEN:-}" ] && [ -f .env ] && { set -a; . ./.env; set +a; }; A=$CLOUDFLARE_ACCOUNT_ID; T=$CLOUDFLARE_API_TOKEN
 curl -sS -H "Authorization: Bearer $T" "https://api.cloudflare.com/client/v4/user/tokens/verify"
 ```
 The free daily Workers AI allocation is shared with the post illustrations (resets 04:00 local). If the answer says "daily free allocation", tell the user and stop; don't burn retries.

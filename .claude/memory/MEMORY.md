@@ -1,5 +1,5 @@
 - [Image text artifacts OK](image-text-artifacts-ok.md) — small garbled marks OK; text blocks, 4 ears etc. = defect, regenerate; no names in FLUX prompts
-- [Postmypost publishing](vk-no-photo-workarounds.md) — all posts via Postmypost, MCP or REST (project 365896; VK 2334893, MAX 2335160, IG 2344463); Postiz cancelled 12.10; no VK token hacks
+- [Postmypost publishing](vk-no-photo-workarounds.md) — all posts via Postmypost, MCP or REST (project 365896; TG 2334920, VK 2334893, MAX 2335160, IG 2344463); Postiz cancelled 12.10; no VK token hacks
 - [VK cover crop](vk-cover-crop.md) — cover 1920×768, desktop crops ~16% from top; final cover is cover/-=bender_cover_syzran_final=-.jpg, variants deleted
 - [No edits to published posts](no-edit-published-posts.md) — published posts stay as-is; fixes go into the skill for future posts
 - [VPS autopost](vps-autopost.md) — cron on 109.248.18.201 user gorodn, 8/14/20 ±30 min; server posts/ is source of truth; MCP down → scripts/pmp_api.py (REST)

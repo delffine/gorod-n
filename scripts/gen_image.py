@@ -6,11 +6,13 @@
         (posts/YYYYMMDD_HHMM-name.jpg), в JSON записываются image.file, model, steps
     python scripts/gen_image.py <файл_с_промтом.txt> <выходной.jpg> [--steps 4] [--seed N]
 
-Ключи берутся из .env в корне проекта: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN.
+Ключи CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN — из переменных окружения
+(Windows — переменные пользователя, VPS — ~/.config/gorodn.env), запасной вариант — .env в корне проекта.
 """
 import argparse
 import base64
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -21,12 +23,15 @@ MODEL = "@cf/black-forest-labs/flux-1-schnell"
 
 
 def load_env(path: Path) -> dict:
+    """Ключи из файла (если есть), поверх — переменные окружения."""
     env = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip().strip('"').strip("'")
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env[key.strip()] = value.strip().strip('"').strip("'")
+    env.update({k: v.strip() for k, v in os.environ.items() if v.strip()})
     return env
 
 
@@ -35,7 +40,7 @@ def generate(prompt: str, steps: int, seed: int | None) -> bytes:
     account_id = env.get("CLOUDFLARE_ACCOUNT_ID")
     token = env.get("CLOUDFLARE_API_TOKEN")
     if not account_id or not token:
-        sys.exit("В .env не заполнены CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN")
+        sys.exit("Не заданы CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (переменные окружения или .env)")
 
     body = {"prompt": prompt, "steps": steps}
     if seed is not None:  # FLUX schnell на Cloudflare отвечает 400 на seed; каждый запуск и так случайный

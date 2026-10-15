@@ -11,7 +11,8 @@ watercolor — тот же набросок, потом лёгкая тёпла�
              onion dome on the left, ...». Без неё модель просто держит композицию фото.
 Сепия — не здесь, это scripts/sepia_tone.py.
 
-Ключи берутся из .env в корне проекта: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN.
+Ключи CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN — из переменных окружения
+(Windows — переменные пользователя, VPS — ~/.config/gorodn.env), запасной вариант — .env в корне проекта.
 Подробности и подбор промтов — скилл vintage-pencil-sketch.
 """
 import argparse
@@ -25,6 +26,8 @@ import uuid
 from pathlib import Path
 
 from PIL import Image
+
+from gen_image import load_env
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL = "@cf/black-forest-labs/flux-2-klein-9b"  # flux-2-dev лучше, но часто падает с 3043
@@ -51,16 +54,6 @@ TINT = ("Take the pencil drawing from the first image and add light, sparse wate
         "Soviet book. No text.")
 
 
-def load_env(path: Path) -> dict:
-    env = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip().strip('"').strip("'")
-    return env
-
-
 def png_bytes(image: Image.Image) -> bytes:
     buf = io.BytesIO()
     image.save(buf, "PNG")
@@ -71,7 +64,7 @@ def run(prompt: str, image: bytes, size: tuple[int, int], seed: int) -> Image.Im
     env = load_env(ROOT / ".env")
     account_id, token = env.get("CLOUDFLARE_ACCOUNT_ID"), env.get("CLOUDFLARE_API_TOKEN")
     if not account_id or not token:
-        sys.exit("В .env не заполнены CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN")
+        sys.exit("Не заданы CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (переменные окружения или .env)")
 
     boundary = uuid.uuid4().hex
     fields = {"prompt": prompt, "width": size[0], "height": size[1], "seed": seed}

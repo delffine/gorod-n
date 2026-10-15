@@ -3,6 +3,7 @@
 Использование:
     python scripts/gen_cover.py <промт.txt> <выход.jpg> <образец0> [образец1 ...] [--width 1920 --height 768 --steps 25 --seed N]
 В промте образцы называются image 0, image 1, ... в порядке перечисления.
+Ключи Cloudflare — как в gen_image.py (переменные окружения, запасной вариант — .env).
 """
 import argparse
 import base64

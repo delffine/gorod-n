@@ -16,6 +16,8 @@ Since 2026-10-09 a second cron line `*/5 * * * * auto/inbox_bot.sh` keeps the in
 
 Since 2026-10-12: when the Postmypost MCP is down (it was 10/11–10/12: CONNECT_TIMEOUT, then 404 on mcp.postmypost.io/mcp while api.postmypost.io/v4.1 works with the same token), publish via `scripts/pmp_api.py` (publish/check/get); the skill and auto/prompt.md say so. Upload status 3 = processing, not error. Postiz is gone (cancelled 2026-10-12); on 10/11 its fallback caused duplicate TG posts (hleb, nalichniki).
 
+Since 2026-10-15 all keys (Claude, bots, PMP_TOKEN, CLOUDFLARE_*) live only in `~/.config/gorodn.env`; project `.env` on the VPS was deleted (scripts fall back to `.env` only if present; locally keys are Windows user variables). gorodn.env must have LF line endings — a `` broke the Cloudflare URL once; `.mcp.json` holds `${PMP_TOKEN}` (old one backed up to `temp/bak/`). Long-running inbox_bot must be restarted after env changes. `claude mcp list` shows "Pending approval" — irrelevant for `-p` (approval is in `.claude/settings.local.json`); MCP often connects too late in `-p`, so runs usually publish via pmp_api.py.
+
 **Why:** the user wants one news post every ~6 h in daytime with no review ("до первого косяка").
 
 **How to apply:** the server `posts/` and `data/selected/` are the source of truth. Before making a post locally, pull state from the VPS so there are no duplicates. After changing the skill or prompts locally, copy them to the server. Related: [[vk-no-photo-workarounds]], [[no-edit-published-posts]].

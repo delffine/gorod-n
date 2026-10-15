@@ -113,7 +113,7 @@ posts/20261006_1855-scorpions.jpg
 gorod-n/
 ├── README.md            — описание проекта (этот файл)
 ├── .claude/skills/city-n-news-to-soc/ — скилл Claude Code: весь цикл от новости до публикации
-├── .env                 — ключи API (не публиковать; шаблон — .env.example)
+├── .env.example         — какие ключи нужны и где их задать (переменные окружения)
 ├── prompts/
 │   └── bender_style.md  — инструкция по стилю пересказа и отбору новостей
 ├── data/
