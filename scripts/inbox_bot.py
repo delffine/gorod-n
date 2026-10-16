@@ -19,12 +19,13 @@
 
 Файлы элемента data/inbox/<id>/: text.md — текст (подписи альбома подряд), photo.jpg, photo_2.jpg… — фото,
 meta.json — статус и прочее. Статусы: new → drafting → draft → publishing | queued → published | scheduled;
-cancelled; error.
+cancelled; error. Черновик без ответа дольше DRAFT_TTL удаляется целиком: папка, JSON и картинка поста.
 """
 import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -42,6 +43,7 @@ STATE = INBOX / ".state.json"
 TZ = timezone(timedelta(hours=4))  # время города Н (Europe/Samara)
 SLOTS = (8, 14, 20)  # автопостинг cron, ±30 мин
 GROUP_PAUSE = 3  # с: альбом приходит несколькими сообщениями — черновик начинаем после паузы
+DRAFT_TTL = timedelta(hours=1)  # черновик без ответа удаляется: к этому времени уже прислана новая попытка
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import post_json  # noqa: E402
@@ -334,6 +336,18 @@ def new_item(bot, event: dict) -> str:
     return item
 
 
+def remove_item(item: str, meta: dict):
+    """Удалить элемент целиком: его пост (JSON и картинку) из posts/ и папку data/inbox/<id>."""
+    if meta.get("post"):
+        post_file = ROOT / meta["post"]
+        try:
+            post_json.image_path(post_file, post_json.load(post_file)).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
+        post_file.unlink(missing_ok=True)
+    shutil.rmtree(INBOX / item)
+
+
 def start_job(item: str, action: str):
     """auto/inbox.sh <id> draft|publish в фоне; по окончании он сам вызовет `inbox_bot.py done`."""
     update_meta(item, status="drafting" if action == "draft" else "publishing", error=None)
@@ -541,6 +555,9 @@ class Inbox:
     def on_button(self, bot, event: dict):
         action, item = event["data"].split(":", 1)
         chat = event["chat"]
+        if not meta_path(item).exists():
+            bot.answer(event, "Черновик уже удалён: час без ответа", buttons=[])
+            return
         meta = load_meta(item)
         allowed = {"cancel": ("draft", "queued")}.get(action, ("draft",))
         if meta["status"] not in allowed:
@@ -560,9 +577,11 @@ class Inbox:
             update_meta(item, status="queued", when="queue")
             bot.send(chat, f"Поставил в очередь: выйдет с ближайшим автопостом, около {next_slot():%H:%M}.")
         elif action == "time":
+            update_meta(item, draft_at=now().isoformat(timespec="seconds"))  # час на ответ — заново
             self.state["awaiting"] = {"kind": "time", "item": item, "messenger": bot.name}
             bot.send(chat, "Когда публиковать? Например: 18:30, завтра 9:00, 12.10 18:30")
         elif action == "redo":
+            update_meta(item, draft_at=now().isoformat(timespec="seconds"))
             self.state["awaiting"] = {"kind": "redo", "item": item, "messenger": bot.name}
             bot.send(chat, "Что поправить? Напишите одним сообщением.")
         elif action == "cancel":
@@ -595,6 +614,25 @@ class Inbox:
                 bot.send(load_meta(item)["chat_id"], "Принял, готовлю пост — это пара минут.")
                 start_job(item, "draft")
 
+    def expire_drafts(self, bot):
+        """Удалить черновики этого мессенджера, на которые не ответили за DRAFT_TTL."""
+        for item in items_by_status("draft"):
+            meta = load_meta(item)
+            if meta.get("messenger", "tg") != bot.name or item in self.pending:
+                continue
+            since = datetime.fromisoformat(meta.get("draft_at") or meta["received_at"])
+            if now() - since < DRAFT_TTL:
+                continue
+            title = post_title(meta)
+            remove_item(item, meta)
+            if (self.state.get("awaiting") or {}).get("item") == item:
+                del self.state["awaiting"]
+            log(f"{item}: черновик удалён — без ответа с {since:%d.%m %H:%M}")
+            try:
+                bot.send(meta["chat_id"], f"🗑 Черновик удалён — час без ответа: {title}")
+            except Exception as e:
+                log(f"{item}: не сообщил об удалении: {e}")
+
     def listen(self, bot):
         log(f"{bot.name}: слушаю, разрешены: {sorted(bot.allowed) or 'никто'}")
         try:
@@ -611,6 +649,10 @@ class Inbox:
             with self.lock:
                 for event in events:
                     self.handle(bot, event)
+                try:
+                    self.expire_drafts(bot)
+                except Exception as e:
+                    log(f"{bot.name} expire_drafts: {e!r}")
                 save_state(self.state)
                 self.start_ready()
 
@@ -635,6 +677,7 @@ def done(item: str, rc: int | None):
         meta = update_meta(item, status="error", error=f"Claude не закончил работу (код {rc}), подробности в логе")
     bot, chat, status = messenger(meta.get("messenger", "tg")), meta["chat_id"], meta["status"]
     if status == "draft":
+        update_meta(item, draft_at=now().isoformat(timespec="seconds"))  # отсюда считается DRAFT_TTL
         post_file = ROOT / meta["post"]
         post = post_json.load(post_file)
         text = post_json.render_text(post)

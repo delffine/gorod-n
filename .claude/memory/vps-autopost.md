@@ -16,7 +16,10 @@ Since 2026-10-09 a second cron line `*/5 * * * * auto/inbox_bot.sh` keeps the in
 
 Since 2026-10-12: when the Postmypost MCP is down (it was 10/11–10/12: CONNECT_TIMEOUT, then 404 on mcp.postmypost.io/mcp while api.postmypost.io/v4.1 works with the same token), publish via `scripts/pmp_api.py` (publish/check/get); the skill and auto/prompt.md say so. Upload status 3 = processing, not error. Postiz is gone (cancelled 2026-10-12); on 10/11 its fallback caused duplicate TG posts (hleb, nalichniki).
 
-Since 2026-10-15 all keys (Claude, bots, PMP_TOKEN, CLOUDFLARE_*) live only in `~/.config/gorodn.env`; project `.env` on the VPS was deleted (scripts fall back to `.env` only if present; locally keys are Windows user variables). gorodn.env must have LF line endings — a `` broke the Cloudflare URL once; `.mcp.json` holds `${PMP_TOKEN}` (old one backed up to `temp/bak/`). Long-running inbox_bot must be restarted after env changes. `claude mcp list` shows "Pending approval" — irrelevant for `-p` (approval is in `.claude/settings.local.json`); MCP often connects too late in `-p`, so runs usually publish via pmp_api.py.
+Since 2026-10-15 all keys (Claude, bots, PMP_TOKEN, CLOUDFLARE_*) live only in `~/.config/gorodn.env`; project `.env` on the VPS was deleted (scripts fall back to `.env` only if present; locally keys are Windows user variables). gorodn.env must have LF line endings — a `
+` broke the Cloudflare URL once; `.mcp.json` holds `${PMP_TOKEN}` (old one backed up to `temp/bak/`). Long-running inbox_bot must be restarted after env changes. `claude mcp list` shows "Pending approval" — irrelevant for `-p` (approval is in `.claude/settings.local.json`); MCP often connects too late in `-p`, so runs usually publish via pmp_api.py.
+
+Since 2026-10-16: the inbox bot deletes a draft (inbox folder + post JSON/jpg) after 1 h without a button press (`DRAFT_TTL`); `auto/run.sh` ends with `scripts/cleanup.py`, which deletes `posts/` files whose name time is older than 3 days and finished inbox items older than 3 days — so the server keeps only ~3 days of history (user's choice).
 
 **Why:** the user wants one news post every ~6 h in daytime with no review ("до первого косяка").
 

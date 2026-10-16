@@ -40,4 +40,5 @@ timeout -s KILL 1500 claude -p "$(cat auto/prompt.md)" \
 rc=$?
 python -c 'import json;d=json.load(open("temp/auto/claude.json"));print("is_error",d.get("is_error"),"turns",d.get("num_turns"),"ms",d.get("duration_ms"),"cost",round(d.get("total_cost_usd") or 0,3));print(d.get("result",""))' 2>/dev/null
 echo "claude exit=$rc"
+python scripts/cleanup.py  # посты и элементы бота старше 3 дней
 echo "===== $(date '+%F %T') конец"
