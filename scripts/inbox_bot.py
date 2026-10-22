@@ -44,6 +44,7 @@ TZ = timezone(timedelta(hours=4))  # время города Н (Europe/Samara)
 SLOTS = (8, 14, 20)  # автопостинг cron, ±30 мин
 GROUP_PAUSE = 3  # с: альбом приходит несколькими сообщениями — черновик начинаем после паузы
 DRAFT_TTL = timedelta(hours=1)  # черновик без ответа удаляется: к этому времени уже прислана новая попытка
+SCHEDULED_CHECK = 600  # с: как часто бот проверяет, вышли ли запланированные посты
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import post_json  # noqa: E402
@@ -419,16 +420,7 @@ def last_post_report() -> str:
         post = post_json.load(posts[-1])
     except (OSError, ValueError) as e:
         return f"📰 Прошлый пост {posts[-1].name}: не читается ({e})"
-    records = post.get("publications", [])
-    if any(r["status"] == "scheduled" and r.get("via") == "postmypost" and r.get("published_at")
-           and datetime.fromisoformat(r["published_at"]) <= now() for r in records):
-        # время вышло, а записи ещё scheduled: спросить Postmypost (иначе их обновит только следующий автопрогон)
-        try:
-            subprocess.run([sys.executable, str(ROOT / "scripts" / "pmp_api.py"), "check", str(posts[-1])],
-                           cwd=ROOT, capture_output=True, timeout=90)
-            records = post_json.load(posts[-1]).get("publications", [])
-        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
-            print(f"pmp_api check {posts[-1].name}: {e}", flush=True)
+    records = fresh_records(posts[-1], post)
     lines = [f"📰 Прошлый пост: {post.get('title') or posts[-1].stem}"]
     if not records:
         lines.append("⚠️ Не опубликован ни в одну сеть.")
@@ -452,6 +444,45 @@ def last_post_report() -> str:
         if records:
             lines.append(f"• {name}: {line}")
     return "\n".join(lines)
+
+
+def fresh_records(post_file: Path, post: dict) -> list[dict]:
+    """Записи publications; если время scheduled-записей вышло — сначала спросить Postmypost
+    (иначе их обновит только следующий автопрогон)."""
+    records = post.get("publications", [])
+    if any(r["status"] == "scheduled" and r.get("via") == "postmypost" and r.get("published_at")
+           and datetime.fromisoformat(r["published_at"]) <= now() for r in records):
+        try:
+            subprocess.run([sys.executable, str(ROOT / "scripts" / "pmp_api.py"), "check", str(post_file)],
+                           cwd=ROOT, capture_output=True, timeout=90)
+            records = post_json.load(post_file).get("publications", [])
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            print(f"pmp_api check {post_file.name}: {e}", flush=True)
+    return records
+
+
+def close_scheduled(messenger_name: str) -> list[tuple[dict, str]]:
+    """Элементы scheduled этого мессенджера, пост которых уже вышел хоть в одну сеть, перевести в published.
+    Возвращает (meta, текст для автора) по каждому закрытому."""
+    closed = []
+    for item in items_by_status("scheduled"):
+        meta = load_meta(item)
+        if meta.get("messenger", "tg") != messenger_name:
+            continue
+        post_file = ROOT / meta["post"]
+        try:
+            records = fresh_records(post_file, post_json.load(post_file))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        published = [r for r in records if r["status"] == "published"]
+        if not published:
+            continue
+        urls = {r["platform"]: r.get("url") for r in published if r.get("url")}
+        url = urls.get("vk") or next(iter(urls.values()), None)
+        meta = update_meta(item, status="published", url=url)
+        log(f"{item}: вышел — scheduled → published")
+        closed.append((meta, f"✅ Опубликовано: {post_title(meta)}\n{url or ''}".strip()))
+    return closed
 
 
 def at(record: dict) -> str:
@@ -499,6 +530,7 @@ class Inbox:
         self.pending = {}  # элемент -> (бот, время последнего сообщения)
         self.groups = {}  # id альбома -> элемент
         self.lock = threading.Lock()
+        self.checked = {}  # мессенджер -> когда последний раз проверяли scheduled
 
     def on_message(self, bot, event: dict):
         chat, text = event["chat"], event["text"]
@@ -633,6 +665,17 @@ class Inbox:
             except Exception as e:
                 log(f"{item}: не сообщил об удалении: {e}")
 
+    def check_scheduled(self, bot):
+        """Раз в SCHEDULED_CHECK закрыть вышедшие посты и прислать автору ссылку."""
+        if time.time() - self.checked.get(bot.name, 0) < SCHEDULED_CHECK:
+            return
+        self.checked[bot.name] = time.time()
+        for meta, text in close_scheduled(bot.name):
+            try:
+                bot.send(meta["chat_id"], text)
+            except Exception as e:
+                log(f"{meta['id']}: не сообщил о выходе: {e}")
+
     def listen(self, bot):
         log(f"{bot.name}: слушаю, разрешены: {sorted(bot.allowed) or 'никто'}")
         try:
@@ -653,6 +696,10 @@ class Inbox:
                     self.expire_drafts(bot)
                 except Exception as e:
                     log(f"{bot.name} expire_drafts: {e!r}")
+                try:
+                    self.check_scheduled(bot)
+                except Exception as e:
+                    log(f"{bot.name} check_scheduled: {e!r}")
                 save_state(self.state)
                 self.start_ready()
 

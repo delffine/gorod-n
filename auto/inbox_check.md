@@ -5,7 +5,7 @@
 `get_publication(<post_id>)` для записей `scheduled` в его `publications`.
 - Вышло — обнови записи (`post_json.py --record-postmypost …` без `--status`) и
   `python scripts/inbox_bot.py set {ITEM} status=published url=<ссылка VK>`.
-- Ещё ждёт публикации — ничего не меняй (статус останется scheduled, закроет следующий запуск).
+- Ещё ждёт публикации — ничего не меняй (статус останется scheduled; бот сам раз в 10 мин проверяет и закроет, когда пост выйдет).
 - Ошибка публикации — `python scripts/inbox_bot.py set {ITEM} status=error "error=<что случилось>"`.
 
 Итог — одна строка.
