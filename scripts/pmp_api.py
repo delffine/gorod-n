@@ -6,7 +6,7 @@
 Использование:
     python scripts/pmp_api.py publish posts/<пост>.json [--accounts tg,vk,max,ig] [--at 2026-10-12T11:00:00+04:00]
                                       [--image-url URL]
-        # загрузить картинку, создать публикацию (по умолчанию через 2 мин) и записать её в JSON как scheduled.
+        # загрузить картинку (сам файл, напрямую; с --image-url — по ссылке), создать публикацию (по умолчанию через 2 мин) и записать её в JSON как scheduled.
         # Сети, где пост уже вышел или уже запланирован, пропускаются.
     python scripts/pmp_api.py check posts/<пост>.json
         # обновить записи scheduled по данным Postmypost (вышло — published со ссылками)
@@ -78,17 +78,39 @@ def public_url(img: Path) -> str:
     return out
 
 
-def upload(url: str) -> int:
-    """init_upload + status_upload -> file_id."""
-    up = call("POST", "/upload/init", {"project_id": PROJECT_ID, "url": url})
+def wait_upload(up_id: int, what: str) -> int:
+    """status_upload до готовности -> file_id."""
     for _ in range(40):
-        st = call("GET", "/upload/status", id=up["id"])
+        st = call("GET", "/upload/status", id=up_id)
         if st.get("status") == 1 and st.get("file_id"):
             return st["file_id"]
         if st.get("status") not in (None, 0, 3, 5):  # 5 — принято, 3 — обрабатывается
-            sys.exit(f"Загрузка {url} не удалась: {st}")
+            sys.exit(f"Загрузка {what} не удалась: {st}")
         time.sleep(3)
-    sys.exit(f"Загрузка {url} не завершилась за 2 мин: {up}")
+    sys.exit(f"Загрузка {what} не завершилась за 2 мин: {up_id}")
+
+
+def upload(url: str) -> int:
+    """Загрузка по ссылке: init_upload(url) -> file_id."""
+    up = call("POST", "/upload/init", {"project_id": PROJECT_ID, "url": url})
+    return wait_upload(up["id"], url)
+
+
+def upload_file(img: Path) -> int:
+    """Прямая загрузка файла: init_upload(name, size) -> POST в S3 -> complete_upload -> file_id.
+    Не зависит от того, может ли Postmypost скачать картинку по ссылке (24.10 загрузка по ссылке отдавала 422)."""
+    up = call("POST", "/upload/init", {"project_id": PROJECT_ID, "name": img.name, "size": img.stat().st_size})
+    if not up.get("action"):
+        sys.exit(f"Postmypost не выдал адрес для прямой загрузки: {up}")
+    cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "120"]
+    for f in up["fields"]:
+        cmd += ["--form-string", f"{f['key']}={f['value']}"]
+    cmd += ["-F", f"file=@{img}", up["action"]]
+    code = subprocess.run(cmd, capture_output=True, text=True, timeout=150).stdout.strip()
+    if not code.startswith("2"):
+        sys.exit(f"S3 не принял {img.name}: HTTP {code}")
+    call("POST", "/upload/complete", {}, id=up["id"])
+    return wait_upload(up["id"], img.name)
 
 
 def taken(post: dict, key: str) -> str | None:
@@ -114,14 +136,18 @@ def publish(path: Path, accounts: list[str], at: str | None, image_url: str | No
         return
 
     img = image_path(path, post)
-    url = image_url or public_url(img)
-    post.setdefault("image", {})["url"] = url
-    file_id = upload(url)
+    if image_url:
+        post.setdefault("image", {})["url"] = image_url
+        file_id = upload(image_url)
+    else:
+        if NGINX_DIR.is_dir():  # ссылка для истории; Postmypost получает сам файл
+            post.setdefault("image", {})["url"] = public_url(img)
+        file_id = upload_file(img)
     ig_file_id = file_id
     if "ig" in todo:
         ig = ig_image(path, post)
         if ig != img:
-            ig_file_id = upload(public_url(ig))
+            ig_file_id = upload_file(ig)
 
     post_at = datetime.fromisoformat(at) if at else datetime.now(LOCAL_TZ) + timedelta(minutes=2)
     post_at = post_at.astimezone(LOCAL_TZ).replace(microsecond=0)
