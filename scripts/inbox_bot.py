@@ -67,6 +67,12 @@ HELP = """Пришлите текст новости одним сообщени
 
 /status — прошлый пост и где он вышел, что в работе, в очереди и когда следующий автопрогон"""
 
+AUDIO_EXT = {".aac", ".m4a", ".mp3", ".ogg", ".oga", ".opus", ".wav", ".amr", ".3gp", ".webm", ".flac"}
+VOICE_LOST = ("🎙 MAX не передал боту голосовое — это известный сбой MAX, на нашей стороне его не исправить. Как обойти:\n"
+              "• нажмите у голосового «Расшифровать», скопируйте текст и пришлите его сообщением;\n"
+              "• или запишите на диктофон и пришлите файлом через скрепку — так дойдёт и распознается;\n"
+              "• или отправьте голосовое в Telegram-бот.")
+
 STATUS_RU = {
     "new": "принята", "drafting": "пишется", "draft": "черновик", "publishing": "публикуется",
     "queued": "в очереди", "scheduled": "запланирована", "published": "опубликована",
@@ -213,31 +219,50 @@ class Max:
             state["max_marker"] = result["marker"]
         events = []
         for update in result.get("updates", []):
-            kind = update.get("update_type")
-            if kind == "bot_started":
-                events.append({"kind": "message", "user": update["user"]["user_id"], "chat": update["user"]["user_id"],
-                               "text": "", "photos": [], "voices": [], "group": None, "start": True,
-                               "who": update["user"]})
-            elif kind == "message_callback":
-                cb = update["callback"]
-                events.append({"kind": "button", "user": cb["user"]["user_id"], "chat": cb["user"]["user_id"],
-                               "data": cb.get("payload", ""), "callback": update, "who": cb["user"]})
-            elif kind == "message_created":
-                msg = update["message"]
-                sender = msg.get("sender") or {}
-                if sender.get("is_bot") or msg["recipient"].get("chat_type") != "dialog":
-                    continue
-                # пересланное сообщение — тоже новость: берём его текст и фото
-                bodies = [msg.get("body") or {}, ((msg.get("link") or {}).get("message") or {})]
-                text = "\n".join(b["text"] for b in bodies if b.get("text"))
-                photos = [a["payload"]["url"] for b in bodies for a in (b.get("attachments") or [])
-                          if a.get("type") == "image" and a.get("payload", {}).get("url")]
-                voices = [a["payload"]["url"] for b in bodies for a in (b.get("attachments") or [])
-                          if a.get("type") == "audio" and a.get("payload", {}).get("url")]
-                events.append({"kind": "message", "user": sender.get("user_id"), "chat": sender.get("user_id"),
-                               "text": text, "photos": photos, "voices": voices, "group": None,
-                               "start": text.startswith(("/start", "/help")), "who": sender})
+            try:
+                event = self.parse(update)
+            except Exception as e:  # незнакомый формат — не терять остальные события, а сам формат записать в лог
+                log(f"max: не разобрал событие ({e!r}): {json.dumps(update, ensure_ascii=False)[:3000]}")
+                event = None
+            if event:
+                events.append(event)
         return events
+
+    def parse(self, update: dict) -> dict | None:
+        kind = update.get("update_type")
+        if kind == "message_created" and "message" not in update and len(self.allowed) == 1:
+            # баг MAX: нативное голосовое (и кружок) приходит в GET /updates пустым — без сообщения и отправителя.
+            # https://github.com/max-messenger/max-bot-api-client-ts/issues/250. Пишем единственному автору.
+            user = next(iter(self.allowed))
+            return {"kind": "notice", "user": user, "chat": user, "text": VOICE_LOST}
+        if kind == "bot_started":
+            return {"kind": "message", "user": update["user"]["user_id"], "chat": update["user"]["user_id"],
+                    "text": "", "photos": [], "voices": [], "group": None, "start": True, "who": update["user"]}
+        if kind == "message_callback":
+            cb = update["callback"]
+            return {"kind": "button", "user": cb["user"]["user_id"], "chat": cb["user"]["user_id"],
+                    "data": cb.get("payload", ""), "callback": update, "who": cb["user"]}
+        if kind != "message_created":
+            return None
+        msg = update["message"]
+        sender = msg.get("sender") or {}
+        if sender.get("is_bot") or (msg.get("recipient") or {}).get("chat_type") != "dialog":
+            return None
+        # пересланное сообщение — тоже новость: берём его текст и фото
+        bodies = [msg.get("body") or {}, ((msg.get("link") or {}).get("message") or {})]
+        attachments = [a for b in bodies for a in (b.get("attachments") or [])]
+        text = "\n".join(b["text"] for b in bodies if b.get("text"))
+        photos = [a["payload"]["url"] for a in attachments if a.get("type") == "image" and (a.get("payload") or {}).get("url")]
+        # голосовое: нативное (audio) или аудиофайл, отправленный скрепкой (file с расширением аудио)
+        voices = [a["payload"]["url"] for a in attachments if (a.get("payload") or {}).get("url") and (
+            a.get("type") == "audio" or a.get("type") == "file" and Path(a.get("filename") or "").suffix.lower() in AUDIO_EXT)]
+        other = [a for a in attachments if a.get("type") not in ("image", "audio", "inline_keyboard")
+                 and (a.get("payload") or {}).get("url") not in voices]
+        if other or (any(a.get("type") == "audio" for a in attachments) and not voices):
+            log(f"max: вложения без обработки: {json.dumps(attachments, ensure_ascii=False)[:3000]}")
+        return {"kind": "message", "user": sender.get("user_id"), "chat": sender.get("user_id"),
+                "text": text, "photos": photos, "voices": voices, "group": None,
+                "start": text.startswith(("/start", "/help")), "who": sender}
 
     def setup(self):
         self.api("PATCH", "/me/commands", {"commands": [{"name": "status", "description": "Что в работе, в очереди и в расписании"},
@@ -676,7 +701,10 @@ class Inbox:
             log(f"чужой ({bot.name}): id {event['user']} @{who.get('username')} {who.get('first_name')} — игнор")
             return
         try:
-            if event["kind"] == "button":
+            if event["kind"] == "notice":
+                log(f"{bot.name}: {event['text'][:60]}")
+                bot.send(event["chat"], event["text"])
+            elif event["kind"] == "button":
                 self.on_button(bot, event)
             else:
                 self.on_message(bot, event)

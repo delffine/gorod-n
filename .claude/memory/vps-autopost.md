@@ -23,4 +23,4 @@ Since 2026-10-16: the inbox bot deletes a draft (inbox folder + post JSON/jpg) a
 
 **Why:** the user wants one news post every ~6 h in daytime with no review ("до первого косяка").
 
-**How to apply:** the server `posts/` and `data/selected/` are the source of truth. Before making a post locally, pull state from the VPS so there are no duplicates. After changing the skill or prompts locally, copy them to the server. Related: [[vk-no-photo-workarounds]], [[no-edit-published-posts]].
+**How to apply:** the server `posts/` and `data/selected/` are the source of truth. Before making a post locally, pull state from the VPS so there are no duplicates. After changing the skill or prompts locally, copy them to the server. The VPS copy is not a git repo (no git pull): deploy changed files with scp, first comparing server md5 with the pre-change git version so server-side edits are not overwritten. Related: [[vk-no-photo-workarounds]], [[no-edit-published-posts]].
