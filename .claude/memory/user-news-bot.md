@@ -21,3 +21,5 @@ Decisions by the user:
 **How to apply:** bot = long-polling script on the VPS ([[vps-autopost]]), whitelist only the user's account, token in ~/.config/gorodn.env, never in the project. Publishing goes through Postmypost ([[vk-no-photo-workarounds]]).
 
 Status 2026-10-09: TG bot live (incl. photo styles). MAX bot «ГородН - редакция» enabled 16:13: API host is platform-api.max.ru (platform-api2 fails SSL on the VPS), user MAX id 303404961 whitelisted. Next: user tests MAX flow end to end.
+
+Voice input added 2026-11-08 (TG voice/audio, MAX `audio` attachment): scripts/transcribe.py → Cloudflare Whisper large v3 turbo, ogg/opus accepted as is; bot shows «🎙 Распознал», photo-only item waits TEXT_WAIT=90 s for text/voice; meta `voice: true` lets draft and factcheck fix recognition slips. MAX audio attachment shape not yet confirmed on a real message.

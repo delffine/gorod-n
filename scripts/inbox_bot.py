@@ -43,13 +43,18 @@ STATE = INBOX / ".state.json"
 TZ = timezone(timedelta(hours=4))  # время города Н (Europe/Samara)
 SLOTS = (8, 14, 20)  # автопостинг cron, ±30 мин
 GROUP_PAUSE = 3  # с: альбом приходит несколькими сообщениями — черновик начинаем после паузы
+TEXT_WAIT = 90  # с: фото без текста ждёт подпись или голосовое отдельным сообщением
 DRAFT_TTL = timedelta(hours=1)  # черновик без ответа удаляется: к этому времени уже прислана новая попытка
 SCHEDULED_CHECK = 600  # с: как часто бот проверяет, вышли ли запланированные посты
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import post_json  # noqa: E402
+from transcribe import transcribe  # noqa: E402
 
 HELP = """Пришлите текст новости одним сообщением, можно с фото (или альбомом).
+
+Можно голосом: сначала фото (если есть), потом голосовое. Я пришлю, что распознал, и сделаю из этого пост. \
+Голосом можно и править черновик после «Переделать», и называть время публикации.
 
 Есть фото — в пост пойдёт оно, в нашей сепии. Напишите в тексте «карандаш» или «акварель» — \
 вместо сепии будет рисунок по фото в стиле старой книжной иллюстрации. Нет фото — картинку нарисует нейросеть; \
@@ -93,8 +98,8 @@ def multipart(fields: dict, files: dict) -> tuple[bytes, str]:
 # --- мессенджеры
 #
 # Событие от мессенджера — словарь:
-#   {"kind": "message", "user", "chat", "text", "photos": [ссылка для download], "group": id альбома или None,
-#    "start": True для /start и кнопки «Начать»}
+#   {"kind": "message", "user", "chat", "text", "photos": [ссылка для download], "voices": [то же для голосовых],
+#    "group": id альбома или None, "start": True для /start и кнопки «Начать»}
 #   {"kind": "button", "user", "chat", "data", "callback": исходный объект нажатия}
 # Кнопки — строки списков (текст, data).
 
@@ -144,8 +149,10 @@ class Telegram:
                 document = msg.get("document") or {}
                 photo = (msg["photo"][-1]["file_id"] if msg.get("photo")
                          else document["file_id"] if document.get("mime_type") in ("image/jpeg", "image/png") else None)
+                voice = (msg.get("voice") or msg.get("audio") or {}).get("file_id")
                 events.append({"kind": "message", "user": msg["from"]["id"], "chat": msg["chat"]["id"],
-                               "text": text, "photos": [photo] if photo else [], "group": msg.get("media_group_id"),
+                               "text": text, "photos": [photo] if photo else [], "voices": [voice] if voice else [],
+                               "group": msg.get("media_group_id"),
                                "start": text.startswith(("/start", "/help")), "who": msg["from"]})
         return events
 
@@ -209,7 +216,8 @@ class Max:
             kind = update.get("update_type")
             if kind == "bot_started":
                 events.append({"kind": "message", "user": update["user"]["user_id"], "chat": update["user"]["user_id"],
-                               "text": "", "photos": [], "group": None, "start": True, "who": update["user"]})
+                               "text": "", "photos": [], "voices": [], "group": None, "start": True,
+                               "who": update["user"]})
             elif kind == "message_callback":
                 cb = update["callback"]
                 events.append({"kind": "button", "user": cb["user"]["user_id"], "chat": cb["user"]["user_id"],
@@ -224,8 +232,10 @@ class Max:
                 text = "\n".join(b["text"] for b in bodies if b.get("text"))
                 photos = [a["payload"]["url"] for b in bodies for a in (b.get("attachments") or [])
                           if a.get("type") == "image" and a.get("payload", {}).get("url")]
+                voices = [a["payload"]["url"] for b in bodies for a in (b.get("attachments") or [])
+                          if a.get("type") == "audio" and a.get("payload", {}).get("url")]
                 events.append({"kind": "message", "user": sender.get("user_id"), "chat": sender.get("user_id"),
-                               "text": text, "photos": photos, "group": None,
+                               "text": text, "photos": photos, "voices": voices, "group": None,
                                "start": text.startswith(("/start", "/help")), "who": sender})
         return events
 
@@ -312,6 +322,8 @@ def add_message(bot, item: str, event: dict):
         with open(folder / "text.md", "a", encoding="utf-8") as f:
             f.write(event["text"].strip() + "\n")
     add_photos(bot, item, event["photos"])
+    if event.get("voiced"):
+        update_meta(item, voice=True)
 
 
 def add_photos(bot, item: str, sources: list):
@@ -322,6 +334,28 @@ def add_photos(bot, item: str, sources: list):
         bot.download(source, folder / name)
         photos.append(name)
     update_meta(item, photos=photos)
+
+
+def recognize(bot, event: dict):
+    """Голосовые сообщения → текст: дописать к тексту события и показать пользователю, что распознано."""
+    parts = []
+    for i, source in enumerate(event["voices"]):
+        path = ROOT / "temp" / f"voice_{bot.name}_{now():%Y%m%d_%H%M%S}_{i}.ogg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            bot.download(source, path)
+            parts.append(transcribe(path))
+        finally:
+            path.unlink(missing_ok=True)
+    recognized = "\n".join(p for p in parts if p)
+    log(f"голосовое ({bot.name}): {len(recognized)} символов")
+    bot.send(event["chat"], f"🎙 Распознал:\n{recognized}" if recognized else "🎙 Не разобрал ни слова — повторите, пожалуйста.")
+    event["text"] = "\n".join(t for t in (event["text"], recognized) if t)
+    event["voiced"] = bool(recognized)
+
+
+def has_text(item: str) -> bool:
+    return bool((INBOX / item / "text.md").read_text(encoding="utf-8").strip())
 
 
 def new_item(bot, event: dict) -> str:
@@ -540,6 +574,11 @@ class Inbox:
         if text.startswith("/status"):
             bot.send(chat, queue_report())
             return
+        if event["voices"]:
+            recognize(bot, event)
+            text = event["text"]
+            if not text and not event["photos"]:
+                return
         awaiting = self.state.pop("awaiting", None)
         group = event["group"] and f"{bot.name}:{event['group']}"
         if awaiting and awaiting.get("messenger", "tg") == bot.name and awaiting["kind"] == "redo" and (text or event["photos"]):
@@ -556,6 +595,8 @@ class Inbox:
                 if group:
                     self.groups[group] = item
             update_meta(item, feedback=meta["feedback"] + [feedback])
+            if event.get("voiced"):
+                update_meta(item, voice=True)
             self.pending[item] = (bot, time.time())  # черновик запустит start_ready, когда догрузится альбом
             log(f"{item}: правка ({bot.name})")
             return
@@ -571,9 +612,14 @@ class Inbox:
                 start_job(item, "publish")
                 bot.send(chat, f"Ставлю публикацию на {when:%d.%m в %H:%M}…")
             return
+        waiting = [i for i, (b, _) in self.pending.items() if b is bot and not has_text(i)]
         if group and group in self.groups:
             item = self.groups[group]
             add_message(bot, item, event)
+        elif waiting:  # фото пришло раньше, а это текст или голосовое к нему
+            item = waiting[-1]
+            add_message(bot, item, event)
+            log(f"{item}: дописан текст ({bot.name})")
         else:
             if not text and not event["photos"]:
                 bot.send(chat, "Такое не понимаю: пришлите текст новости и, если есть, фото.")
@@ -582,6 +628,9 @@ class Inbox:
             if group:
                 self.groups[group] = item
             log(f"{item}: новая новость ({bot.name})")
+            if not text:
+                bot.send(chat, "Фото есть. Пришлите текст или голосовое к нему — подожду полторы минуты, "
+                               "потом сделаю пост по одному фото.")
         self.pending[item] = (bot, time.time())
 
     def on_button(self, bot, event: dict):
@@ -641,7 +690,7 @@ class Inbox:
     def start_ready(self):
         """Запустить черновики, по которым альбом уже точно догрузился."""
         for item, (bot, last) in list(self.pending.items()):
-            if time.time() - last > GROUP_PAUSE:
+            if time.time() - last > (GROUP_PAUSE if has_text(item) else TEXT_WAIT):
                 del self.pending[item]
                 bot.send(load_meta(item)["chat_id"], "Принял, готовлю пост — это пара минут.")
                 start_job(item, "draft")
